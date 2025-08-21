@@ -1,0 +1,126 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import psycopg2
+import os
+
+app = Flask(__name__)
+CORS(app)  # Enable CORS for frontend communication
+
+# --- Database Connection Configuration ---
+DB_NAME = os.environ.get('DB_NAME', 'hr_db')
+DB_USER = os.environ.get('DB_USER', 'postgres')
+DB_PASS = os.environ.get('DB_PASS', 'your_password')
+DB_HOST = os.environ.get('DB_HOST', 'localhost')
+DB_PORT = os.environ.get('DB_PORT', '5432')
+
+def get_db_connection():
+    try:
+        conn = psycopg2.connect(
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASS,
+            host=DB_HOST,
+            port=DB_PORT
+        )
+        return conn
+    except psycopg2.OperationalError as e:
+        return jsonify({"error": "Database connection failed", "details": str(e)}), 500
+
+# --- CRUD Endpoints for Employees ---
+
+# READ all employees
+@app.route('/employees', methods=['GET'])
+def get_employees():
+    conn = get_db_connection()
+    if conn and isinstance(conn, tuple): return conn
+    cur = conn.cursor()
+    cur.execute("SELECT employee_id, first_name, last_name, email FROM employees;")
+    employees = cur.fetchall()
+    cur.close()
+    conn.close()
+    
+    # Format the result into a list of dictionaries
+    employees_list = []
+    for emp in employees:
+        employees_list.append({
+            "employee_id": emp[0],
+            "first_name": emp[1],
+            "last_name": emp[2],
+            "email": emp[3]
+        })
+    return jsonify(employees_list)
+
+# CREATE a new employee
+@app.route('/employees', methods=['POST'])
+def create_employee():
+    data = request.json
+    first_name = data.get('first_name')
+    last_name = data.get('last_name')
+    email = data.get('email')
+    
+    conn = get_db_connection()
+    if conn and isinstance(conn, tuple): return conn
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO employees (first_name, last_name, email) VALUES (%s, %s, %s) RETURNING employee_id;",
+            (first_name, last_name, email)
+        )
+        new_id = cur.fetchone()[0]
+        conn.commit()
+        return jsonify({"message": "Employee created successfully", "employee_id": new_id}), 201
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": "Failed to create employee", "details": str(e)}), 400
+    finally:
+        cur.close()
+        conn.close()
+
+# UPDATE an employee
+@app.route('/employees/<int:employee_id>', methods=['PUT'])
+def update_employee(employee_id):
+    data = request.json
+    first_name = data.get('first_name')
+    last_name = data.get('last_name')
+    email = data.get('email')
+
+    conn = get_db_connection()
+    if conn and isinstance(conn, tuple): return conn
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE employees SET first_name = %s, last_name = %s, email = %s WHERE employee_id = %s;",
+            (first_name, last_name, email, employee_id)
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            return jsonify({"error": "Employee not found"}), 404
+        return jsonify({"message": "Employee updated successfully"})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": "Failed to update employee", "details": str(e)}), 400
+    finally:
+        cur.close()
+        conn.close()
+
+# DELETE an employee
+@app.route('/employees/<int:employee_id>', methods=['DELETE'])
+def delete_employee(employee_id):
+    conn = get_db_connection()
+    if conn and isinstance(conn, tuple): return conn
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM employees WHERE employee_id = %s;", (employee_id,))
+        conn.commit()
+        if cur.rowcount == 0:
+            return jsonify({"error": "Employee not found"}), 404
+        return jsonify({"message": "Employee deleted successfully"})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": "Failed to delete employee", "details": str(e)}), 400
+    finally:
+        cur.close()
+        conn.close()
+
+if __name__ == '__main__':
+    app.run(debug=True)
